@@ -1,0 +1,131 @@
+import math
+import csv
+def k_PFT_Dome_Axial(R, zoffset, d, wa, h, kappa, lambda_, k_contact, hydroph_thick_mismatch):
+    """
+    Calculate the total stiffness for all load paths of a PFT Dome.
+    """
+    def mortar_chord_length(R, zoffset, d):
+        L = 2 * (R - zoffset) * math.sin(d / (2 * R))
+        return L
+
+    def equilibrium_contact_chord_length(wa, zoffset, d):
+        R0 = d / math.sin(wa)
+        L0_contact_eq = mortar_chord_length(R0, zoffset, d)
+        return L0_contact_eq
+
+    def l_diff_from_eq(L, L0_contact_eq):
+        L_diff_from_L0 = L - L0_contact_eq
+        return L_diff_from_L0
+
+    def WedgeToWedgeAngleAsfunctionR(L, R):
+        W2W_R = math.sin(L / (2 * R))
+        return W2W_R
+
+    def WedgeToWedgeContactArea(L, R, wa):
+        W2W_R = WedgeToWedgeAngleAsfunctionR(L, R)
+        W2W_ContactArea_fR = math.cos(W2W_R - wa)
+        return W2W_ContactArea_fR
+
+    def LhigherL0_DerivTension(L, R, wa, L_diff_from_L0, kappa, lambda_, hydroph_thick_mismatch):
+        W2W_ContactArea_fR = WedgeToWedgeContactArea(L, R, wa)
+        return (1 - W2W_ContactArea_fR) * 2 * kappa * ((hydroph_thick_mismatch / lambda_) ** 2) * (0.5 / lambda_) * (math.pi * 4) * (1 / math.exp(abs(L_diff_from_L0) / lambda_))
+
+    def LlowerL0_DerivTension(L, R, wa, L_diff_from_L0, kappa, lambda_, k_contact, hydroph_thick_mismatch, d):
+        W2W_ContactArea_fR = WedgeToWedgeContactArea(L, R, wa)
+        return (W2W_ContactArea_fR) * (2 * math.pi / 16) * k_contact * abs(L_diff_from_L0)
+
+    def chord_DerivTension_ProteinAndMortar_Ldiff(R, hydroph_thick_mismatch, L_diff_from_L0, kappa, lambda_, k_contact, wa, d, zoffset):
+        L = 2 * (R - zoffset) * math.sin(d / (2 * R))
+        L0_contact_eq = equilibrium_contact_chord_length(wa, zoffset, d)
+        L_diff_from_L0 = l_diff_from_eq(L, L0_contact_eq)
+        return LhigherL0_DerivTension(L, R, wa, L_diff_from_L0, kappa, lambda_, hydroph_thick_mismatch) + LlowerL0_DerivTension(L, R, wa, L_diff_from_L0, kappa, lambda_, k_contact, hydroph_thick_mismatch, d)
+
+    def dL_dh(R, h, zoffset, d):
+        term1 = (R / h) * 2 * math.sin(d / (2 * R))
+        term2 = (R / h) * ((R - zoffset) / (R ** 2)) * d * math.cos(d / (2 * R))
+        dL_dh_ABS = abs(term1 - term2)
+        return dL_dh_ABS
+
+    def k_unit_proteinANDmortar_axial(dL_dh_ABS, chord_DerivTension_ProteinAndMortar_Ldiff):
+        k_unit_proteinANDmortar_axial_L = chord_DerivTension_ProteinAndMortar_Ldiff * dL_dh_ABS
+        return k_unit_proteinANDmortar_axial_L
+
+    def k_each_load_path(k_unit_proteinANDmortar, d, R, h):
+        denominator = R * math.acos((R - h) / R)
+        k_each_load_path_result = (k_unit_proteinANDmortar * d) / denominator
+        return k_each_load_path_result
+
+    def k_all_load_paths(k_each_load_path, R, h, d):
+        k_total = k_each_load_path * (2 * math.pi / (R * math.acos((R - h) / R))) * (((h - R) / 2) * math.sqrt((2 * R * h) - h ** 2) + (R ** 2 / 2) * math.asin((h - R) / R))
+        return k_total
+
+    L = mortar_chord_length(R, zoffset, d)
+    R0 = d / math.sin(wa)
+    L0_contact_eq = mortar_chord_length(R0, zoffset, d)
+    L_diff_from_L0 = l_diff_from_eq(L, L0_contact_eq)
+    chord_DerivTension = chord_DerivTension_ProteinAndMortar_Ldiff(R, hydroph_thick_mismatch, L_diff_from_L0, kappa, lambda_, k_contact, wa, d, zoffset)
+    dL_dh_ABS = dL_dh(R, h, zoffset, d)
+    k_unit_proteinANDmortar_axial_L = k_unit_proteinANDmortar_axial(dL_dh_ABS, chord_DerivTension)
+    k_each_load_path = k_each_load_path(k_unit_proteinANDmortar_axial_L, d, R, h)
+    k_all_paths = k_all_load_paths(k_each_load_path, R, h, d)
+    return k_all_paths, R0
+
+def generate_stiffness_table(zoffset, d, wa, h, kappa, lambda_, k_contact, hydroph_thick_mismatch, N=70, num_points=1000):
+    """
+    Generate a table of k_all_paths as a function of R using a loop.
+    """
+    R0 = d / math.sin(wa)
+    R_min = R0 * (1 - N / 100)
+    R_max = R0 / (1 - N / 100) * 20
+    R_values = []
+    k_all_paths_values = []
+    R0_values = []
+    step = (R_max - R_min) / (num_points - 1)
+    for i in range(num_points):
+        R = R_min + i * step
+        k_all_paths, R0 = k_PFT_Dome_Axial(R, zoffset, d, wa, h, kappa, lambda_, k_contact, hydroph_thick_mismatch)
+        R_values.append(R)
+        k_all_paths_values.append(k_all_paths)
+        R0_values.append(R0)
+    return list(zip(R_values, R0_values, k_all_paths_values))
+
+if __name__ == "__main__":
+    # Input parameters
+    zoffset = 5    # nm units. Radial offset
+    d = 12        # nm units. Lattice pitch
+    wa =  0.12 # Wedge angle (radians)
+    h = 25         # nm units. Cap height
+    
+    kappa = 10     # /10-100 kbT units. Bending energy of the membrane
+    lambda_ = 1  # 1-3 nm units. Decay length parameter
+    k_contact = 24.7  # pN/nm units. Contact stiffness
+    hydroph_thick_mismatch = 1  # 0.1-1.0 nm units. Hydrophobic thickness mismatch
+
+    # Calculate R0
+    R0 = d / math.sin(wa)
+
+    # Generate the table
+    stiffness_table = generate_stiffness_table(zoffset, d, wa, h, kappa, lambda_, k_contact, hydroph_thick_mismatch) 
+
+# Define the CSV file name with input parameters and R0
+    csv_file = f"stiffness_table_R0_{R0:.4f}_zoffset_{zoffset}_d_{d}_wa_{wa}_h_{h}_kappa_{kappa}_lambda_{lambda_}_kcontact_{k_contact}_hydroph_{hydroph_thick_mismatch}.csv"
+
+    # Write the table to a CSV file
+    with open(csv_file, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        # Write the header with input parameters in the first two columns
+        writer.writerow(['Parameter', 'Value', 'R (nm)', 'k_all_paths (pN/nm)'])
+        writer.writerow(['zoffset (nm)', zoffset, '', ''])
+        writer.writerow(['d (nm)', d, '', ''])
+        writer.writerow(['wa (rad)', wa, '', ''])
+        writer.writerow(['h (nm)', h, '', ''])
+        writer.writerow(['kappa (kBT)', kappa, '', ''])
+        writer.writerow(['lambda_ (nm)', lambda_, '', ''])
+        writer.writerow(['k_contact (pN/nm)', k_contact, '', ''])
+        writer.writerow(['hydroph_thick_mismatch (nm)', hydroph_thick_mismatch, '', ''])
+        writer.writerow(['R0 (nm)', R0, '', ''])
+        writer.writerow(['', '', 'R (nm)', 'k_all_paths (pN/nm)'])
+        for R, R0, k_all_paths in stiffness_table:
+            writer.writerow(['', '', f"{R:.4f}", f"{k_all_paths:.4f}"])
+
+    print(f"Stiffness table has been written to {csv_file}")
